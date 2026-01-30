@@ -4,6 +4,7 @@ import { UploadSection } from './components/UploadSection';
 import { ScheduleTable } from './components/ScheduleTable';
 import { generateSchedule } from './utils/scheduler';
 import { BrainCircuit } from 'lucide-react';
+import { SpeedInsights } from "@vercel/speed-insights/react"
 
 function App() {
   const [schedule, setSchedule] = useState(null);
@@ -34,19 +35,21 @@ function App() {
       Object.values(emp.shifts).forEach(shift => {
         if (!shift) return;
         try {
-          // Support formats: "09:00 - 13:00" or just "4" (if user types number)
-          if (shift.includes('-')) {
-            const [s, e] = shift.replace(/ /g, '').split('-');
-            const start = parseInt(s.split(':')[0]);
-            const end = parseInt(e.split(':')[0]);
-            if (!isNaN(start) && !isNaN(end)) {
-              totalHours += (end - start);
+          // Support multiple shifts separated by " / " or space-slash-space
+          // e.g. "09:00-13:00 / 17:00-21:00"
+          const segments = shift.split('/').map(s => s.trim());
+
+          segments.forEach(segment => {
+            if (segment.includes('-')) {
+              const cleaned = segment.replace(/\s/g, '');
+              const [s, e] = cleaned.split('-');
+              const start = parseInt(s);
+              const end = parseInt(e);
+              if (!isNaN(start) && !isNaN(end)) {
+                totalHours += (end - start);
+              }
             }
-          } else {
-            // If user enters simple number like "8", treat as hours.
-            // Or if usage of other format...
-            // For now, let's keep it simple: strict format or no calc
-          }
+          });
         } catch (e) { }
       });
 
@@ -114,6 +117,7 @@ function App() {
           <ScheduleTable schedule={schedule} onReset={handleReset} onShiftUpdate={handleShiftUpdate} />
         )}
       </main>
+      <SpeedInsights />
     </div>
   );
 }

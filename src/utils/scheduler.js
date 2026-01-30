@@ -50,9 +50,10 @@ function parsePreferences(pref) {
     return {
         noWeekend: isNo && isWeekend && !isLongWeekend, // logic handled via blockedDays for long weekend
         weekendOnly: !isNo && isWeekend && !isLongWeekend && (p.includes('solo') || p.includes('only') || p.trim() === 'weekend'),
-        morningOnly: p.includes('mattina') || p.includes('am'),
-        afternoonOnly: p.includes('pomeriggio') || p.includes('pm'),
-        midDayOnly: p.includes('intermedio') || p.includes('centrale') || p.includes('spezzato'),
+        morningOnly: p.includes('mattina') || p.includes('mattino') || p.includes('am') || p.includes('apertura'),
+        afternoonOnly: p.includes('pomeriggio') || p.includes('pm') || p.includes('sera') || p.includes('chiusura'),
+        midDayOnly: p.includes('intermedio') || p.includes('centrale'),
+        splitShift: p.includes('spezzato'),
         blockedDays,
         requiredDays
     };
@@ -115,20 +116,66 @@ export function generateSchedule(employees, settings) {
     const peakEnd = Math.floor(closeH - (totalStoreHours * 0.25));
     const SHIFT_MID_DYNAMIC = `${peakStart}:00 - ${peakEnd}:00`;
 
+    // Split Shift: 4h Morning + 4h Evening
+    const splitMorningEnd = openH + 4;
+    const splitEveningStart = closeH - 4;
+    const SHIFT_SPLIT_DYNAMIC = `${storeSettings.openTime} - ${splitMorningEnd}:00 / ${splitEveningStart}:00 - ${storeSettings.closeTime}`;
+
     const canDoFullDay = totalStoreHours <= 9;
     const SHIFT_FULL_DYNAMIC = `${storeSettings.openTime} - ${storeSettings.closeTime}`;
     const halfShiftDuration = Math.floor(totalStoreHours / 2);
 
     // Deep copy and Pre-process
-    const schedule = employees.map(emp => ({
-        ...emp,
-        parsedPrefs: parsePreferences(emp['Esigenze/Preferenze'] || ''),
-        preferredShift: analyzeHistory(emp), // Learn from history
-        assignedHours: 0,
-        shifts: {
-            Lun: '', Mar: '', Mer: '', Gio: '', Ven: '', Sab: '', Dom: ''
-        }
-    }));
+    const schedule = employees.map(emp => {
+        const shifts = {};
+
+        // Smart Initialization:
+        // - Digits (Time) -> Ignore (let AI regenerate based on history/needs)
+        // - Text (Ferie/Malattia) -> Keep (Lock this day)
+        DAYS.forEach(day => {
+            const raw = emp[day] || '';
+            // If it contains a digit (0-9), we assume it's a time -> Clear it from "assigned" so AI can regenerate
+            // If it's pure text (Ferie, Malattia, Chiuso) -> Keep it locked
+            if (/[0-9]/.test(raw)) {
+                shifts[day] = '';
+            } else {
+                shifts[day] = raw;
+            }
+        });
+
+        // Calculate initially assigned hours from imported shifts
+        let initialHours = 0;
+        Object.values(shifts).forEach(s => {
+            if (!s || s === 'CHIUSO') return;
+            try {
+                // Determine segments (single or split)
+                const segments = s.includes('/') ? s.split('/') : [s];
+
+                segments.forEach(seg => {
+                    if (!seg || !seg.includes('-')) return;
+                    // Remove ALL whitespace
+                    const cleaned = seg.replace(/\s/g, '');
+                    const [startStr, endStr] = cleaned.split('-');
+
+                    if (startStr && endStr) {
+                        const start = parseInt(startStr);
+                        const end = parseInt(endStr);
+                        if (!isNaN(start) && !isNaN(end)) {
+                            initialHours += (end - start);
+                        }
+                    }
+                });
+            } catch (e) { }
+        });
+
+        return {
+            ...emp,
+            parsedPrefs: parsePreferences(emp['Esigenze/Preferenze'] || ''),
+            preferredShift: analyzeHistory(emp), // Learn from history
+            assignedHours: initialHours,
+            shifts: shifts
+        };
+    });
 
     // Randomize order of employees slightly
     const shuffledEmployees = [...schedule].sort(() => Math.random() - 0.5);
@@ -166,7 +213,14 @@ export function generateSchedule(employees, settings) {
                 if (a.parsedPrefs.weekendOnly && !b.parsedPrefs.weekendOnly) return 1;
                 if (!a.parsedPrefs.weekendOnly && b.parsedPrefs.weekendOnly) return -1;
             }
-            // Priority 3: Distance from contract target (Largest gap first)
+            // Priority 3: Specific Constraints (Morning/Afternoon/Split/MidDay)
+            // Giving priority to people with limited availability so they get their spots
+            const aPref = a.parsedPrefs.morningOnly || a.parsedPrefs.afternoonOnly || a.parsedPrefs.midDayOnly || a.parsedPrefs.splitShift;
+            const bPref = b.parsedPrefs.morningOnly || b.parsedPrefs.afternoonOnly || b.parsedPrefs.midDayOnly || b.parsedPrefs.splitShift;
+            if (aPref && !bPref) return -1;
+            if (!aPref && bPref) return 1;
+
+            // Priority 4: Distance from contract target (Largest gap first)
             const aRem = (parseInt(a['Ore Contratto']) || 0) - a.assignedHours;
             const bRem = (parseInt(b['Ore Contratto']) || 0) - b.assignedHours;
             return bRem - aRem;
@@ -175,6 +229,8 @@ export function generateSchedule(employees, settings) {
         // TRACK COVERAGE: We count how many people are on each "slot"
         let countMorning = 0;
         let countAfternoon = 0;
+        let countOpen = 0;
+        let countClose = 0;
 
         // --- PASS 1: Fill based on Coverage & Preferences ---
         for (const emp of shuffledEmployees) {
@@ -199,25 +255,69 @@ export function generateSchedule(employees, settings) {
             let selectedShift = '';
             let hoursToAdd = 0;
 
-            // 1. Preferred Pattern (History) if generic prefs
-            if (emp.preferredShift) {
+            // --- PRIORITY 1: CRITICAL COVERAGE (Store Needs) ---
+            if (!selectedShift && !emp.parsedPrefs.midDayOnly && !emp.parsedPrefs.splitShift) {
+                const MIN_COVERAGE = 2;
+
+                // Force Open
+                if (countOpen < MIN_COVERAGE && !emp.parsedPrefs.afternoonOnly && remaining >= halfShiftDuration) {
+                    selectedShift = SHIFT_MORN_DYNAMIC;
+                    hoursToAdd = halfShiftDuration;
+                }
+                // Force Close
+                else if (countClose < MIN_COVERAGE && !emp.parsedPrefs.morningOnly && remaining >= halfShiftDuration) {
+                    selectedShift = SHIFT_AFT_DYNAMIC;
+                    hoursToAdd = halfShiftDuration;
+                }
+            }
+
+            // --- PRIORITY 2: EXPLICIT PREFERENCES (Employee Constraints) ---
+            if (!selectedShift) {
+                // Explicit Split Shift
+                if (emp.parsedPrefs.splitShift && remaining >= 8) {
+                    selectedShift = SHIFT_SPLIT_DYNAMIC;
+                    hoursToAdd = 8;
+                }
+                // Explicit Mid-Day
+                else if (emp.parsedPrefs.midDayOnly && remaining >= halfShiftDuration) {
+                    selectedShift = SHIFT_MID_DYNAMIC;
+                    hoursToAdd = halfShiftDuration;
+                }
+                // Morning Only
+                else if (emp.parsedPrefs.morningOnly && remaining >= halfShiftDuration) {
+                    selectedShift = SHIFT_MORN_DYNAMIC;
+                    hoursToAdd = halfShiftDuration;
+                }
+                // Afternoon Only
+                else if (emp.parsedPrefs.afternoonOnly && remaining >= halfShiftDuration) {
+                    selectedShift = SHIFT_AFT_DYNAMIC;
+                    hoursToAdd = halfShiftDuration;
+                }
+            }
+
+            // --- PRIORITY 3: HISTORY OPTIMIZATION (Soft) ---
+            if (!selectedShift && emp.preferredShift) {
                 try {
+                    // VALIDATE HISTORY vs PREFERENCE
                     const [s, e] = emp.preferredShift.replace(/ /g, '').split('-');
-                    const duration = parseInt(e) - parseInt(s);
-                    if (duration <= remaining) {
-                        selectedShift = emp.preferredShift;
-                        hoursToAdd = duration;
+                    const startH = parseInt(s.split(':')[0]);
+
+                    let isValidHistory = true;
+                    if (emp.parsedPrefs.morningOnly && startH >= midPoint) isValidHistory = false;
+                    if (emp.parsedPrefs.afternoonOnly && startH < midPoint) isValidHistory = false;
+                    if (emp.parsedPrefs.splitShift && !emp.preferredShift.includes('/')) isValidHistory = false;
+
+                    if (isValidHistory) {
+                        const duration = parseInt(e) - parseInt(s);
+                        if (duration <= remaining) {
+                            selectedShift = emp.preferredShift;
+                            hoursToAdd = duration;
+                        }
                     }
                 } catch (err) { }
             }
 
-            // 2. Explicit Mid-Day Preference
-            if (!selectedShift && emp.parsedPrefs.midDayOnly && remaining >= halfShiftDuration) {
-                selectedShift = SHIFT_MID_DYNAMIC;
-                hoursToAdd = peakStart - peakEnd;
-            }
-
-            // 3. Balance & Coverage
+            // 5. Balance & Coverage (Fallback)
             if (!selectedShift) {
                 const needMorning = countMorning <= countAfternoon;
 
@@ -247,10 +347,20 @@ export function generateSchedule(employees, settings) {
             if (selectedShift) {
                 // Validate hours
                 try {
-                    const [s, e] = selectedShift.replace(/ /g, '').split('-');
-                    const dur = parseInt(e) - parseInt(s);
-                    if (!isNaN(dur) && dur > 0) hoursToAdd = dur;
-                    else hoursToAdd = halfShiftDuration;
+                    // Handle Split Shift Parsing for Duration Calculation
+                    if (selectedShift.includes('/')) {
+                        const segments = selectedShift.split('/').map(s => s.trim());
+                        hoursToAdd = 0;
+                        segments.forEach(seg => {
+                            const [s, e] = seg.replace(/ /g, '').split('-');
+                            hoursToAdd += (parseInt(e) - parseInt(s));
+                        });
+                    } else {
+                        const [s, e] = selectedShift.replace(/ /g, '').split('-');
+                        const dur = parseInt(e) - parseInt(s);
+                        if (!isNaN(dur) && dur > 0) hoursToAdd = dur;
+                        else hoursToAdd = halfShiftDuration;
+                    }
                 } catch (e) { hoursToAdd = halfShiftDuration; }
 
                 assignShift(emp, day, selectedShift, hoursToAdd);
@@ -258,6 +368,10 @@ export function generateSchedule(employees, settings) {
                 const startHour = parseInt(selectedShift.split('-')[0]);
                 if (startHour < midPoint) countMorning++;
                 if (isNaN(startHour) || startHour + hoursToAdd > midPoint) countAfternoon++;
+
+                // Detailed tracking
+                if (startHour === openH) countOpen++;
+                if (!isNaN(startHour) && (startHour + hoursToAdd) >= closeH) countClose++;
             }
         }
 
@@ -302,9 +416,18 @@ export function generateSchedule(employees, settings) {
 
             if (selectedShift) {
                 try {
-                    const [s, e] = selectedShift.replace(/ /g, '').split('-');
-                    const dur = parseInt(e) - parseInt(s);
-                    if (!isNaN(dur) && dur > 0) hoursToAdd = dur;
+                    if (selectedShift.includes('/')) {
+                        const segments = selectedShift.split('/').map(s => s.trim());
+                        hoursToAdd = 0;
+                        segments.forEach(seg => {
+                            const [s, e] = seg.replace(/ /g, '').split('-');
+                            hoursToAdd += (parseInt(e) - parseInt(s));
+                        });
+                    } else {
+                        const [s, e] = selectedShift.replace(/ /g, '').split('-');
+                        const dur = parseInt(e) - parseInt(s);
+                        if (!isNaN(dur) && dur > 0) hoursToAdd = dur;
+                    }
                 } catch (e) { }
 
                 assignShift(emp, day, selectedShift, hoursToAdd);

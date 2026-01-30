@@ -102,12 +102,17 @@ export function ScheduleTable({ schedule, onReset, onShiftUpdate }) {
                                     </td>
                                     {DAYS.map(day => (
                                         <td key={day} className="p-2">
-                                            <input
-                                                type="text"
-                                                className="w-full text-xs font-medium px-2 py-1 bg-indigo-50 text-indigo-700 rounded border border-indigo-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all text-center placeholder-slate-300"
-                                                value={emp.shifts[day] || ''}
+                                            <textarea
+                                                className={`w-full text-xs font-medium px-2 py-1 bg-indigo-50 text-indigo-700 rounded border border-indigo-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all text-center placeholder-slate-300 resize-none overflow-hidden ${(emp.shifts[day] || '').includes('/') ? 'min-h-[3.5rem] py-2' : 'h-8'
+                                                    }`}
+                                                value={(emp.shifts[day] || '').replace(/\s*\/\s*/g, '\n')}
                                                 placeholder="-"
-                                                onChange={(e) => onShiftUpdate(idx, day, e.target.value)}
+                                                rows={(emp.shifts[day] || '').includes('/') ? 2 : 1}
+                                                onChange={(e) => {
+                                                    // Convert newlines to " / " for storage
+                                                    const val = e.target.value.replace(/\n/g, ' / ');
+                                                    onShiftUpdate(idx, day, val);
+                                                }}
                                             />
                                         </td>
                                     ))}
