@@ -39,23 +39,23 @@ export function ScheduleTable({ schedule, onReset, onShiftUpdate }) {
     };
 
     return (
-        <div className="w-full max-w-7xl mx-auto mt-8 bg-white rounded-xl shadow-xl overflow-hidden animate-in fade-in duration-500">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+        <div className="w-full max-w-7xl mx-auto mt-6 sm:mt-8 bg-white rounded-xl shadow-xl overflow-hidden animate-in fade-in duration-500">
+            <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/50">
                 <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Turni Generati</h2>
+                    <h2 className="text-xl sm:text-2xl font-bold text-slate-800">Turni Generati</h2>
                     <p className="text-slate-500 text-sm">Controlla e scarica la programmazione settimanale</p>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap sm:flex-nowrap gap-2 sm:gap-3 w-full sm:w-auto">
                     <button
                         onClick={onReset}
-                        className="flex items-center gap-2 px-4 py-2 text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm font-medium"
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm font-medium text-sm"
                     >
                         <RotateCcw className="w-4 h-4" />
                         Carica nuovo
                     </button>
                     <button
                         onClick={exportCSV}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200 font-medium"
+                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200 font-medium text-sm"
                     >
                         <Download className="w-4 h-4" />
                         Esporta CSV
@@ -63,7 +63,7 @@ export function ScheduleTable({ schedule, onReset, onShiftUpdate }) {
                 </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
                 <table className="w-full text-left border-collapse">
                     <thead>
                         <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider">

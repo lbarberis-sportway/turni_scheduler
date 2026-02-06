@@ -63,35 +63,35 @@ function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-indigo-600 p-2 rounded-lg text-white">
-              <BrainCircuit className="w-6 h-6" />
+            <div className="bg-white p-1 rounded-lg border border-slate-100 shadow-sm">
+              <img src="/logo.png" alt="Sportway Logo" className="w-8 h-8 object-contain" />
             </div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">
-              AI Shift Scheduler
+            <h1 className="text-lg sm:text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-red-600 to-rose-600 truncate">
+              AI Scheduler
             </h1>
           </div>
-          <div className="text-sm text-slate-500">
+          <div className="text-xs text-slate-500 hidden sm:block">
             Gestione Turni Intelligente
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 pt-10">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 sm:pt-10">
         {!schedule && !isGenerating && (
           <div className="text-center space-y-4 mb-10">
-            <h2 className="text-4xl font-extrabold text-slate-800 tracking-tight">
-              Ottimizza i turni con l'AI
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-800 tracking-tight leading-tight">
+              Ottimizza i turni con <span className="text-red-600">l'AI</span>
             </h2>
-            <p className="text-slate-600 max-w-2xl mx-auto text-lg leading-relaxed">
+            <p className="text-slate-600 max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
               Carica il file CSV con i dati dei dipendenti. Il nostro sistema analizzerà contratti e preferenze per generare la settimana lavorativa perfetta.
             </p>
             <UploadSection onDataLoaded={handleDataLoaded} />
 
-            <div className="mt-12 text-left bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-2xl mx-auto">
+            <div className="mt-8 sm:mt-12 text-left bg-white p-4 sm:p-6 rounded-xl border border-slate-200 shadow-sm max-w-2xl mx-auto">
               <h4 className="font-semibold text-slate-900 mb-2">Formato CSV Richiesto:</h4>
-              <code className="block bg-slate-100 p-3 rounded text-xs text-slate-700 font-mono overflow-x-auto">
+              <code className="block bg-slate-100 p-3 rounded text-xs text-slate-700 font-mono overflow-x-auto whitespace-pre sm:whitespace-normal">
                 Nome; Ore Contratto; Esigenze/Preferenze; Lun; Mar; ...; Dom; Lun_W1; Mar_W1; ...; Dom_W3
               </code>
               <p className="text-xs text-slate-500 mt-2">
@@ -104,9 +104,9 @@ function App() {
         {isGenerating && (
           <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-700">
             <div className="relative w-20 h-20 mb-8">
-              <div className="absolute inset-0 border-4 border-indigo-100 rounded-full"></div>
-              <div className="absolute inset-0 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-              <BrainCircuit className="absolute inset-0 m-auto w-8 h-8 text-indigo-600 animate-pulse" />
+              <div className="absolute inset-0 border-4 border-red-100 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+              <BrainCircuit className="absolute inset-0 m-auto w-8 h-8 text-red-600 animate-pulse" />
             </div>
             <h3 className="text-2xl font-bold text-slate-800 mb-2">Analisi in corso...</h3>
             <p className="text-slate-500">Sto calcolando le combinazioni migliori per i turni.</p>

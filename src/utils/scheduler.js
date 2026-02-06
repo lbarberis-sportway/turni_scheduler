@@ -179,9 +179,9 @@ function analyzeMultiWeekHistory(employee) {
 export function generateSchedule(employees, settings) {
     // Default settings if not provided
     const storeSettings = {
-        closedDay: settings?.closedDay || 'None',
-        openTime: settings?.openTime || '09:00',
-        closeTime: settings?.closeTime || '21:00'
+        closedDays: settings?.closedDays || (settings?.closedDay ? [settings.closedDay] : []),
+        openTime: settings?.openTime || '09:30',
+        closeTime: settings?.closeTime || '19:30'
     };
 
     // Calculate store hours duration
@@ -272,7 +272,7 @@ export function generateSchedule(employees, settings) {
 
     for (const day of DAYS) {
         // Checking closing day
-        if (day === storeSettings.closedDay) {
+        if (storeSettings.closedDays.includes(day)) {
             shuffledEmployees.forEach(emp => {
                 emp.shifts[day] = 'CHIUSO';
             });
