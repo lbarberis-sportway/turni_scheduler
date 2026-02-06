@@ -92,10 +92,10 @@ function App() {
             <div className="mt-12 text-left bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-2xl mx-auto">
               <h4 className="font-semibold text-slate-900 mb-2">Formato CSV Richiesto:</h4>
               <code className="block bg-slate-100 p-3 rounded text-xs text-slate-700 font-mono overflow-x-auto">
-                Nome, Ore Contratto, Esigenze/Preferenze, Lun, Mar, Mer, Gio, Ven, Sab, Dom
+                Nome; Ore Contratto; Esigenze/Preferenze; Lun; Mar; ...; Dom; Lun_W1; Mar_W1; ...; Dom_W3
               </code>
               <p className="text-xs text-slate-500 mt-2">
-                Le colonne dei giorni (Lun...Dom) possono essere vuote, verranno compilate automaticamente.
+                Le colonne dei giorni (Lun...Dom) sono per la settimana da generare. Le colonne _W1, _W2, _W3 contengono lo storico.
               </p>
             </div>
           </div>

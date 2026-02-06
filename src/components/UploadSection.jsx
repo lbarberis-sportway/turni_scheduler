@@ -11,9 +11,12 @@ export function UploadSection({ onDataLoaded }) {
         openTime: '09:00',
         closeTime: '21:00'
     });
+    const [parsedData, setParsedData] = React.useState(null);
+    const [fileName, setFileName] = React.useState('');
 
     const handleFile = useCallback((file) => {
         if (file) {
+            setFileName(file.name);
             Papa.parse(file, {
                 header: true,
                 skipEmptyLines: true,
@@ -23,19 +26,29 @@ export function UploadSection({ onDataLoaded }) {
                         // Check if columns exist
                         const firstRow = results.data[0];
                         if ('Nome' in firstRow && 'Ore Contratto' in firstRow) {
-                            onDataLoaded(results.data, settings);
+                            setParsedData(results.data);
                         } else {
                             alert("CSV non valido. Assicurati che ci siano le colonne 'Nome' e 'Ore Contratto'.");
+                            setParsedData(null);
+                            setFileName('');
                         }
                     }
                 },
                 error: (err) => {
                     console.error("Error parsing CSV:", err);
                     alert("Errore durante la lettura del CSV.");
+                    setParsedData(null);
+                    setFileName('');
                 }
             });
         }
-    }, [onDataLoaded, settings]);
+    }, []);
+
+    const handleOptimize = () => {
+        if (parsedData) {
+            onDataLoaded(parsedData, settings);
+        }
+    };
 
     const onDrop = (e) => {
         e.preventDefault();
@@ -100,24 +113,52 @@ export function UploadSection({ onDataLoaded }) {
             </div>
 
             <div
-                className="p-8 border-2 border-dashed border-indigo-300 rounded-2xl bg-white/50 backdrop-blur-sm hover:bg-white/80 transition-all cursor-pointer text-center group"
+                className={twMerge(
+                    "p-8 border-2 border-dashed rounded-2xl bg-white/50 backdrop-blur-sm hover:bg-white/80 transition-all cursor-pointer text-center group",
+                    parsedData ? "border-green-300 bg-green-50/30" : "border-indigo-300"
+                )}
                 onDrop={onDrop}
                 onDragOver={onDragOver}
             >
                 <input type="file" accept=".csv" onChange={onChange} className="hidden" id="csv-upload" />
                 <label htmlFor="csv-upload" className="cursor-pointer flex flex-col items-center">
-                    <div className="p-4 bg-indigo-50 rounded-full mb-4 group-hover:scale-110 transition-transform">
-                        <UploadCloud className="w-10 h-10 text-indigo-600" />
+                    <div className={twMerge(
+                        "p-4 rounded-full mb-4 group-hover:scale-110 transition-transform",
+                        parsedData ? "bg-green-100" : "bg-indigo-50"
+                    )}>
+                        <UploadCloud className={twMerge("w-10 h-10", parsedData ? "text-green-600" : "text-indigo-600")} />
                     </div>
-                    <h3 className="text-xl font-bold text-slate-800 mb-2">Importa Dati Dipendenti</h3>
-                    <p className="text-slate-500 mb-6">Trascina qui il tuo file CSV o clicca per cercare</p>
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">
+                        {parsedData ? "File Caricato con Successo" : "Importa Dati Dipendenti"}
+                    </h3>
+                    <p className="text-slate-500 mb-6 font-medium">
+                        {fileName ? (
+                            <span className="text-indigo-600">📄 {fileName}</span>
+                        ) : (
+                            "Trascina qui il tuo file CSV o clicca per cercare"
+                        )}
+                    </p>
 
-                    <div className="flex items-center gap-2 text-sm text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
+                    <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
                         <FileSpreadsheet className="w-4 h-4" />
-                        <span>Formato richiesto: Nome, Ore Contratto, Esigenze...</span>
+                        <span>Formato: Nome; Ore Contratto; Esigenze; Lun...Dom; Lun_W1...Dom_W3</span>
                     </div>
                 </label>
             </div>
+
+            {parsedData && (
+                <div className="animate-in slide-in-from-bottom duration-500">
+                    <button
+                        onClick={handleOptimize}
+                        className="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-200 hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2"
+                    >
+                        🚀 Ottimizza Turni
+                    </button>
+                    <p className="text-center text-xs text-slate-400 mt-2">
+                        Clicca per calcolare la distribuzione ottimale basata sui parametri sopra.
+                    </p>
+                </div>
+            )}
         </div>
     );
 }

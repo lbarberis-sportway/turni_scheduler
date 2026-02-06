@@ -1,6 +1,20 @@
 
 export const DAYS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
 
+// Number of historical weeks to analyze (plus current week = 4 total)
+export const HISTORY_WEEKS = 3;
+
+// Suffixes for historical week columns (W1 = last week, W2 = 2 weeks ago, W3 = 3 weeks ago)
+export const HISTORY_SUFFIXES = ['_W1', '_W2', '_W3'];
+
+// Weights for historical data (more recent = higher weight)
+const HISTORY_WEIGHTS = {
+    current: 1.0,  // Current week (if has data)
+    W1: 0.5,       // Last week - 50%
+    W2: 0.3,       // 2 weeks ago - 30%
+    W3: 0.2        // 3 weeks ago - 20%
+};
+
 /**
  * Parses preferences string into structured constraints
  * @param {string} pref - "No weekend", "No Lun", "Solo Ven", etc.
@@ -8,84 +22,154 @@ export const DAYS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
  */
 function parsePreferences(pref) {
     const p = pref.toLowerCase();
+    const parts = p.split(/[,;]|\be\b/).map(s => s.trim()).filter(Boolean);
+
+    const dayOverrides = {}; // Day -> { morningOnly, afternoonOnly, etc. }
+
+    // Helper to extract flags from a string fragment
+    const getFlags = (fragment) => {
+        return {
+            morningOnly: fragment.includes('mattina') || fragment.includes('mattino') || fragment.includes('am') || fragment.includes('apertura'),
+            afternoonOnly: fragment.includes('pomeriggio') || fragment.includes('pm') || fragment.includes('sera') || fragment.includes('chiusura'),
+            midDayOnly: fragment.includes('intermedio') || fragment.includes('centrale'),
+            splitShift: fragment.includes('spezzato')
+        };
+    };
+
+    // General Flags (fallback)
+    const generalFlags = getFlags(p);
+
     const isWeekend = p.includes('weekend') || p.includes('sabato') || p.includes('domenica');
     const isNo = p.includes('no') || p.includes('mai');
-
-    // Day Specific Parsing
     const blockedDays = new Set();
     const requiredDays = new Set();
-
-    // Check for "Weekend Lungo" (Long Weekend)
     const isLongWeekend = p.includes('lungo') || p.includes('long');
 
-    if (isLongWeekend && isWeekend) {
-        if (isNo) {
-            // "No Weekend Lungo" -> Block Fri, Sab, Dom
-            blockedDays.add('Ven');
-            blockedDays.add('Sab');
-            blockedDays.add('Dom');
-        } else if (p.includes('solo') || p.includes('only')) {
-            // "Solo Weekend Lungo" -> Require Fri, Sab, Dom
-            requiredDays.add('Ven');
-            requiredDays.add('Sab');
-            requiredDays.add('Dom');
-        }
-    }
+    // Parsing specific tokens/parts
+    parts.forEach(part => {
+        let matchedDay = false;
+        DAYS.forEach(day => {
+            const dLower = day.toLowerCase();
+            // Use word boundary to avoid matching 'lun' in 'lungo'
+            const dayRegex = new RegExp(`\\b${dLower}(edi|edì)?\\b`, 'i');
 
-    DAYS.forEach(day => {
-        const dayLower = day.toLowerCase();
-        // Check for "No Lun", "No Lunedì", etc.
-        // We look for patterns like "no lun", "no lunedi"
-        // Simple heuristic: if "no" is near the day name
-        if (p.includes(`no ${dayLower}`) || p.includes(`no ${dayLower}edi`) || p.includes(`no ${dayLower}edì`)) {
-            blockedDays.add(day);
-        }
+            if (dayRegex.test(part)) {
+                matchedDay = true;
 
-        // Check for "Solo Lun", "Solo Lunedì"
-        if (p.includes(`solo ${dayLower}`) || p.includes(`solo ${dayLower}edi`)) {
-            requiredDays.add(day);
+                // If it's a specific day, check for "no" or "solo" or specific shifts
+                if (part.includes('no ') || (isNo && !part.includes('weekend') && part.includes(dLower))) {
+                    blockedDays.add(day);
+                } else if (part.includes('solo ') || part.includes('only ')) {
+                    requiredDays.add(day);
+                }
+
+                // Get shift flags for this specific day
+                const flags = getFlags(part);
+                if (flags.morningOnly || flags.afternoonOnly || flags.midDayOnly || flags.splitShift) {
+                    dayOverrides[day] = flags;
+                }
+            }
+        });
+
+        // Check for general weekend logic (independent of specific day matching)
+        const partIsLong = part.includes('lungo') || part.includes('long');
+        if (part.includes('weekend') || part.includes('sabato') || part.includes('domenica')) {
+            if (part.includes('no')) {
+                blockedDays.add('Sab'); blockedDays.add('Dom');
+                if (partIsLong) blockedDays.add('Ven');
+            } else if (part.includes('solo') || part.includes('only')) {
+                requiredDays.add('Sab'); requiredDays.add('Dom');
+                if (partIsLong) requiredDays.add('Ven');
+            }
         }
     });
 
     return {
-        noWeekend: isNo && isWeekend && !isLongWeekend, // logic handled via blockedDays for long weekend
-        weekendOnly: !isNo && isWeekend && !isLongWeekend && (p.includes('solo') || p.includes('only') || p.trim() === 'weekend'),
-        morningOnly: p.includes('mattina') || p.includes('mattino') || p.includes('am') || p.includes('apertura'),
-        afternoonOnly: p.includes('pomeriggio') || p.includes('pm') || p.includes('sera') || p.includes('chiusura'),
-        midDayOnly: p.includes('intermedio') || p.includes('centrale'),
-        splitShift: p.includes('spezzato'),
+        ...generalFlags,
+        noWeekend: isNo && isWeekend && !isLongWeekend,
+        weekendOnly: !isNo && (p.trim() === 'weekend' || ((p.includes('solo') || p.includes('only')) && isWeekend && !isLongWeekend)),
         blockedDays,
-        requiredDays
+        requiredDays,
+        dayOverrides
     };
 }
 
 /**
- * Analyze past shifts to find preferred patterns
+ * Analyze past shifts across multiple weeks to find preferred patterns.
+ * Supports weighted scoring (recent weeks matter more) and day-specific preferences.
  */
-function analyzeHistory(employee) {
-    const shifts = [];
+function analyzeMultiWeekHistory(employee) {
+    const dailyPatterns = {}; // Day -> { shift: score }
+    const generalShiftScores = {}; // shift -> total score
+    const restDayScores = {}; // Day -> score (how often they are off)
+
     DAYS.forEach(day => {
-        if (employee[day] && employee[day].includes('-')) {
-            shifts.push(employee[day]);
+        dailyPatterns[day] = {};
+        restDayScores[day] = 0;
+
+        // Check columns: Current, _W1, _W2, _W3
+        const versions = [
+            { key: day, weight: HISTORY_WEIGHTS.current },
+            ...HISTORY_SUFFIXES.map((suffix, i) => ({
+                key: `${day}${suffix}`,
+                weight: HISTORY_WEIGHTS[`W${i + 1}`]
+            }))
+        ];
+
+        versions.forEach(v => {
+            const shift = employee[v.key];
+            if (!shift || shift === '' || shift === 'CHIUSO') {
+                restDayScores[day] += v.weight;
+                return;
+            }
+
+            // If it's a valid shift (contains a dash)
+            if (shift.includes('-')) {
+                // Day specific score
+                dailyPatterns[day][shift] = (dailyPatterns[day][shift] || 0) + v.weight;
+                // General score
+                generalShiftScores[shift] = (generalShiftScores[shift] || 0) + v.weight;
+            }
+        });
+    });
+
+    // Determine the most common shift overall
+    let mostCommonShift = null;
+    let maxGeneralScore = 0;
+    Object.entries(generalShiftScores).forEach(([shift, score]) => {
+        if (score > maxGeneralScore) {
+            maxGeneralScore = score;
+            mostCommonShift = shift;
         }
     });
 
-    if (shifts.length === 0) return null;
+    // Determine specific preference for each day
+    const preferredByDay = {};
+    const recurringRestDays = new Set();
 
-    // Find most common shift
-    const frequency = {};
-    let maxFreq = 0;
-    let mostCommon = null;
+    DAYS.forEach(day => {
+        let bestDayShift = null;
+        let maxDayScore = 0;
+        Object.entries(dailyPatterns[day]).forEach(([shift, score]) => {
+            if (score > maxDayScore) {
+                maxDayScore = score;
+                bestDayShift = shift;
+            }
+        });
+        preferredByDay[day] = bestDayShift;
 
-    shifts.forEach(s => {
-        frequency[s] = (frequency[s] || 0) + 1;
-        if (frequency[s] > maxFreq) {
-            maxFreq = frequency[s];
-            mostCommon = s;
+        // If a day is off > 70% of the weighted time, mark as recurring rest day
+        // Max weight per day is 1.0 + 0.5 + 0.3 + 0.2 = 2.0
+        if (restDayScores[day] >= 1.4) {
+            recurringRestDays.add(day);
         }
     });
 
-    return mostCommon;
+    return {
+        mostCommonShift,
+        preferredByDay,
+        recurringRestDays
+    };
 }
 
 /**
@@ -171,7 +255,7 @@ export function generateSchedule(employees, settings) {
         return {
             ...emp,
             parsedPrefs: parsePreferences(emp['Esigenze/Preferenze'] || ''),
-            preferredShift: analyzeHistory(emp), // Learn from history
+            historyAnalysis: analyzeMultiWeekHistory(emp), // Deep analysis of patterns
             assignedHours: initialHours,
             shifts: shifts
         };
@@ -251,21 +335,41 @@ export function generateSchedule(employees, settings) {
             if (emp.parsedPrefs.noWeekend && isWeekend) continue;
             if (emp.parsedPrefs.weekendOnly && !isWeekend) continue;
 
+            // 3. Recurring Rest Day (Implicit Constraint from History)
+            // If they are usually off this day, and we don't have a critical need for them, skip.
+            const isRecurringRest = emp.historyAnalysis.recurringRestDays.has(day);
+            if (isRecurringRest && !emp.parsedPrefs.requiredDays.has(day)) {
+                // Soft skip: if someone else can do it, we'll find them in this loop
+                // But we don't "continue" hard here to avoid under-staffing if NO ONE else is available
+                // Actually, let's keep it as a very strong preference:
+                const otherStaffAvailable = shuffledEmployees.some(other =>
+                    other.Nome !== emp.Nome &&
+                    !other.shifts[day] &&
+                    (parseInt(other['Ore Contratto']) || 0) > other.assignedHours &&
+                    !other.parsedPrefs.blockedDays.has(day)
+                );
+                if (otherStaffAvailable && countOpen >= 1 && countClose >= 1) continue;
+            }
+
+            // --- CHECK DAY OVERRIDES ---
+            // If the employee has a specific preference for TODAY, it replaces their general preference.
+            const dayPref = emp.parsedPrefs.dayOverrides[day] || emp.parsedPrefs;
+
             const remaining = contract - emp.assignedHours;
             let selectedShift = '';
             let hoursToAdd = 0;
 
             // --- PRIORITY 1: CRITICAL COVERAGE (Store Needs) ---
-            if (!selectedShift && !emp.parsedPrefs.midDayOnly && !emp.parsedPrefs.splitShift) {
+            if (!selectedShift && !dayPref.midDayOnly && !dayPref.splitShift) {
                 const MIN_COVERAGE = 2;
 
                 // Force Open
-                if (countOpen < MIN_COVERAGE && !emp.parsedPrefs.afternoonOnly && remaining >= halfShiftDuration) {
+                if (countOpen < MIN_COVERAGE && !dayPref.afternoonOnly && remaining >= halfShiftDuration) {
                     selectedShift = SHIFT_MORN_DYNAMIC;
                     hoursToAdd = halfShiftDuration;
                 }
                 // Force Close
-                else if (countClose < MIN_COVERAGE && !emp.parsedPrefs.morningOnly && remaining >= halfShiftDuration) {
+                else if (countClose < MIN_COVERAGE && !dayPref.morningOnly && remaining >= halfShiftDuration) {
                     selectedShift = SHIFT_AFT_DYNAMIC;
                     hoursToAdd = halfShiftDuration;
                 }
@@ -274,62 +378,78 @@ export function generateSchedule(employees, settings) {
             // --- PRIORITY 2: EXPLICIT PREFERENCES (Employee Constraints) ---
             if (!selectedShift) {
                 // Explicit Split Shift
-                if (emp.parsedPrefs.splitShift && remaining >= 8) {
+                if (dayPref.splitShift && remaining >= 8) {
                     selectedShift = SHIFT_SPLIT_DYNAMIC;
                     hoursToAdd = 8;
                 }
                 // Explicit Mid-Day
-                else if (emp.parsedPrefs.midDayOnly && remaining >= halfShiftDuration) {
+                else if (dayPref.midDayOnly && remaining >= halfShiftDuration) {
                     selectedShift = SHIFT_MID_DYNAMIC;
                     hoursToAdd = halfShiftDuration;
                 }
                 // Morning Only
-                else if (emp.parsedPrefs.morningOnly && remaining >= halfShiftDuration) {
+                else if (dayPref.morningOnly && remaining >= halfShiftDuration) {
                     selectedShift = SHIFT_MORN_DYNAMIC;
                     hoursToAdd = halfShiftDuration;
                 }
                 // Afternoon Only
-                else if (emp.parsedPrefs.afternoonOnly && remaining >= halfShiftDuration) {
+                else if (dayPref.afternoonOnly && remaining >= halfShiftDuration) {
                     selectedShift = SHIFT_AFT_DYNAMIC;
                     hoursToAdd = halfShiftDuration;
                 }
             }
 
             // --- PRIORITY 3: HISTORY OPTIMIZATION (Soft) ---
-            if (!selectedShift && emp.preferredShift) {
-                try {
-                    // VALIDATE HISTORY vs PREFERENCE
-                    const [s, e] = emp.preferredShift.replace(/ /g, '').split('-');
-                    const startH = parseInt(s.split(':')[0]);
+            if (!selectedShift) {
+                const dayPreferred = emp.historyAnalysis.preferredByDay[day];
+                const commonPreferred = emp.historyAnalysis.mostCommonShift;
+                const bestHistoric = dayPreferred || commonPreferred;
 
-                    let isValidHistory = true;
-                    if (emp.parsedPrefs.morningOnly && startH >= midPoint) isValidHistory = false;
-                    if (emp.parsedPrefs.afternoonOnly && startH < midPoint) isValidHistory = false;
-                    if (emp.parsedPrefs.splitShift && !emp.preferredShift.includes('/')) isValidHistory = false;
+                if (bestHistoric) {
+                    try {
+                        // VALIDATE HISTORY vs PREFERENCE (using day-specific pref)
+                        const [s, e] = bestHistoric.replace(/ /g, '').split('-');
+                        const startH = parseInt(s.split(':')[0]);
 
-                    if (isValidHistory) {
-                        const duration = parseInt(e) - parseInt(s);
-                        if (duration <= remaining) {
-                            selectedShift = emp.preferredShift;
-                            hoursToAdd = duration;
+                        let isValidHistory = true;
+                        if (dayPref.morningOnly && startH >= midPoint) isValidHistory = false;
+                        if (dayPref.afternoonOnly && startH < midPoint) isValidHistory = false;
+                        if (dayPref.splitShift && !bestHistoric.includes('/')) isValidHistory = false;
+
+                        if (isValidHistory) {
+                            // Calculate duration
+                            let duration = 0;
+                            if (bestHistoric.includes('/')) {
+                                bestHistoric.split('/').forEach(seg => {
+                                    const [ss, ee] = seg.replace(/ /g, '').split('-');
+                                    duration += (parseInt(ee) - parseInt(ss));
+                                });
+                            } else {
+                                duration = (parseInt(e) - parseInt(s));
+                            }
+
+                            if (duration <= remaining) {
+                                selectedShift = bestHistoric;
+                                hoursToAdd = duration;
+                            }
                         }
-                    }
-                } catch (err) { }
+                    } catch (err) { }
+                }
             }
 
             // 5. Balance & Coverage (Fallback)
             if (!selectedShift) {
                 const needMorning = countMorning <= countAfternoon;
 
-                if (emp.parsedPrefs.morningOnly && remaining >= halfShiftDuration) {
+                if (dayPref.morningOnly && remaining >= halfShiftDuration) {
                     selectedShift = SHIFT_MORN_DYNAMIC;
                     hoursToAdd = halfShiftDuration;
-                } else if (emp.parsedPrefs.afternoonOnly && remaining >= halfShiftDuration) {
+                } else if (dayPref.afternoonOnly && remaining >= halfShiftDuration) {
                     selectedShift = SHIFT_AFT_DYNAMIC;
                     hoursToAdd = halfShiftDuration;
                 } else {
                     // No preference, try full day then half
-                    if (canDoFullDay && remaining >= totalStoreHours && !emp.parsedPrefs.morningOnly && !emp.parsedPrefs.afternoonOnly) {
+                    if (canDoFullDay && remaining >= totalStoreHours && !dayPref.morningOnly && !dayPref.afternoonOnly) {
                         selectedShift = SHIFT_FULL_DYNAMIC;
                         hoursToAdd = totalStoreHours;
                     } else if (remaining >= halfShiftDuration) {
@@ -390,18 +510,19 @@ export function generateSchedule(employees, settings) {
 
             // Assign ANY valid shift
             const remaining = contract - emp.assignedHours;
+            const dayPref = emp.parsedPrefs.dayOverrides[day] || emp.parsedPrefs;
 
             let selectedShift = '';
             let hoursToAdd = 0;
 
-            if (canDoFullDay && remaining >= totalStoreHours && !emp.parsedPrefs.morningOnly && !emp.parsedPrefs.afternoonOnly) {
+            if (canDoFullDay && remaining >= totalStoreHours && !dayPref.morningOnly && !dayPref.afternoonOnly) {
                 selectedShift = SHIFT_FULL_DYNAMIC;
                 hoursToAdd = totalStoreHours;
             } else {
                 if (remaining >= halfShiftDuration) {
-                    if (emp.parsedPrefs.morningOnly) {
+                    if (dayPref.morningOnly) {
                         selectedShift = SHIFT_MORN_DYNAMIC;
-                    } else if (emp.parsedPrefs.afternoonOnly) {
+                    } else if (dayPref.afternoonOnly) {
                         selectedShift = SHIFT_AFT_DYNAMIC;
                     } else {
                         selectedShift = (countMorning <= countAfternoon) ? SHIFT_MORN_DYNAMIC : SHIFT_AFT_DYNAMIC;
